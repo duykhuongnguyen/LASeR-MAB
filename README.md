@@ -54,7 +54,7 @@ bash run_training_all.sh
 
 You can change the training setup in ```scripts/config.yaml```
 
-### Run LASeR on instuction-following tasks
+### Run LASeR on instruction-following tasks
 Coming soon
 
 ### Run LASeR on long-context understanding tasks
