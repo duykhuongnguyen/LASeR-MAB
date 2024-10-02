@@ -1,0 +1,22 @@
+# Model and Dataset Configuration
+model_name: "meta-llama/Meta-Llama-3-8B"
+datasets:
+  strategyqa: "dataset/strategyqa/dev.json"
+  gsm8k: "dataset/gsm8k/test.jsonl"
+  mmlu: "dataset/mmlu/mmlu.json"
+reward_models:
+  - "HuggingFaceH4/zephyr-7b-beta Zephyr-7B-Alpha"
+  - "Qwen/Qwen1.5-7B-Chat"
+  - "openbmb/Eurus-7b-kto"
+  - "allenai/OLMo-7B-0724-Instruct-hf"
+
+# Training Configuration
+training:
+  iterations: 10               # Number of iterations
+  batch_size: 16                # Batch size for training
+  learning_rate: 5e-6           # Learning rate
+  n_responses: 30               # Number of responses to generate during training/inference
+  temperature: 0.8              # Temperature for response generation
+  eval_threshold: 0.1           # Threshold for convergence
+  test_size: 0.2                # Size of test set (for dataset split)
+  dev_size: 0.1                # Size of dev set (from train split)

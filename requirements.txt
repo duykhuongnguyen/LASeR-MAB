@@ -1,0 +1,10 @@
+torch
+transformers
+datasets
+peft
+pyyaml
+accelerate
+backoff
+scikit-learn
+scipy
+tqdm
