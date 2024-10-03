@@ -1,4 +1,4 @@
-# [LASeR: Learning to Adaptively Select Reward Models with Multi-Arm Bandits]()
+# [LASeR: Learning to Adaptively Select Reward Models with Multi-Arm Bandits](https://arxiv.org/abs/2410.01735)
 
 [Duy Nguyen](https://duykhuongnguyen.github.io/)\*, [Archiki Prasad](https://archiki.github.io/)\*, [Elias Stengel-Eskin](https://esteng.github.io/), and [Mohit Bansal](https://www.cs.unc.edu/~mbansal/) (\*equal contribution).
 
@@ -65,7 +65,7 @@ Coming soon
 @article{nguyen2024laser,
   title={LASeR: Learning to Adaptively Select Reward Models with Multi-Arm Bandits},
   author={Nguyen, Duy and Prasad, Archiki and and Stengel-Eskin, Elias and Bansal, Mohit},
-  journal={arXiv},
+  journal={arXiv preprint arXiv:2410.01735},
   year={2024}
 }
 ```
