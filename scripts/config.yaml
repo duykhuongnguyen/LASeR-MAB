@@ -20,3 +20,4 @@ training:
   eval_threshold: 0.1           # Threshold for convergence
   test_size: 0.2                # Size of test set (for dataset split)
   dev_size: 0.1                # Size of dev set (from train split)
+  bandit_mode: "per_query"      # Options: "per_query" (default), "batch"

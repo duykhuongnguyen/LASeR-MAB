@@ -1,7 +1,7 @@
+import copy
 import sys
 import torch
 from torch.optim import Adam
-from transformers import get_linear_schedule_with_warmup
 from utils.config_loader import load_config
 from utils.dataset_manager import DatasetManager
 from model.lora_model import setup_lora_model
@@ -29,7 +29,10 @@ if dataset_name not in config['datasets']:
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 model_name = config["model_name"]
 model, tokenizer = setup_lora_model(model_name)
+if tokenizer.pad_token is None:
+    tokenizer.pad_token = tokenizer.eos_token or tokenizer.bos_token
 model = model.to(device)
+reference_model = copy.deepcopy(model).to(device)
 
 if torch.cuda.device_count() > 1:
     model = torch.nn.DataParallel(model)
@@ -41,21 +44,33 @@ dev_size = config["training"]["dev_size"]
 prompt_type = "reasoning"
 
 dataset_manager = DatasetManager(dataset_paths, test_size=test_size, dev_size=dev_size, prompt_type=prompt_type)
-breakpoint()
 
 
 # Reward models from RewardBench
 multi_gpu = torch.cuda.device_count() > 1  # Use multi-GPU if available
 reward_model_names = config["reward_models"]
 reward_models = load_reward_models(reward_model_names, device, multi_gpu=multi_gpu)
+preference_pair_generators = [PreferencePairGenerator(rm) for rm in reward_models]
 
 # Initialize response generator with 0-shot reasoning prompt format
 n_responses = config["training"]["n_responses"]
 temperature = config["training"]["temperature"]
-response_generator = ResponseGenerator(model, tokenizer, prompt_type=prompt_type, temperature=temperature)
+response_generator = ResponseGenerator(
+    model,
+    tokenizer,
+    device,
+    prompt_type=prompt_type,
+    temperature=temperature,
+)
 
 # Initialize preference pair generator
-trainer = LLMTrainer(model, Adam(model.parameters(), lr=config["training"]["learning_rate"]))
+trainer = LLMTrainer(
+    model,
+    reference_model,
+    tokenizer,
+    Adam(model.parameters(), lr=config["training"]["learning_rate"]),
+    device,
+)
 
 # LinUCB setup for MAB
 K = len(reward_model_names)
@@ -65,37 +80,74 @@ linucb = LinUCB(d=model.module.config.hidden_size if torch.cuda.device_count() >
 M = config["training"]["iterations"]
 batch_size = config["training"]["batch_size"]
 eval_threshold = config["training"]["eval_threshold"]
+bandit_mode = config["training"].get("bandit_mode", "per_query").lower()
+if bandit_mode not in {"per_query", "batch"}:
+    raise ValueError(f"Unsupported bandit_mode: {bandit_mode}")
 
 # Main training loop for the selected dataset
 print(f"Training on {dataset_name} dataset")
 
 for iteration in range(M):
-    total_loss = 0
+    total_loss = 0.0
+    num_updates = 0
     train_dataset = dataset_manager.get_train_data(dataset_name)
     for i in range(0, len(train_dataset), batch_size):
         batch = train_dataset[i:i+batch_size]
         queries = [example['question'] for example in batch]
 
-        # Get embeddings and select a reward model using LinUCB
-        context = response_generator.get_embedding(queries)
-        selected_rm = linucb.select_arm(context)
+        # Compute contextual representations for the current mini-batch
+        contexts = response_generator.get_embeddings(queries)
 
-        # Generate responses
-        responses = response_generator.generate_responses(queries, n_responses=n_responses)
+        if bandit_mode == "per_query":
+            for query, context in zip(queries, contexts):
+                # Select a reward model using LinUCB for this specific query
+                selected_rm = linucb.select_arm(context)
 
-        # Generate preference pairs from the selected reward model
-        preference_pair_gen = PreferencePairGenerator(reward_models[selected_rm])
-        preference_pairs = preference_pair_gen.generate_preference_pairs(responses)
+                # Generate responses for the current query
+                responses = response_generator.generate_responses([query], n_responses=n_responses)
+                if not responses:
+                    continue
 
-        # Perform a training step
-        loss = trainer.train_step(preference_pairs, model)
-        linucb.update(selected_rm, context, -loss)
-        total_loss += loss
+                # Generate preference pairs using the selected reward model
+                preference_pairs = preference_pair_generators[selected_rm].generate_preference_pairs(responses)
+                if not preference_pairs:
+                    continue
 
-    print(f"Iteration {iteration + 1}, Loss: {total_loss / len(train_dataset)}")
+                # Perform a training step and update the bandit with the observed loss signal
+                loss = trainer.train_step(preference_pairs)
+                linucb.update(selected_rm, context, -loss)
+                total_loss += loss
+                num_updates += 1
+
+        else:  # bandit_mode == "batch"
+            context = contexts.mean(axis=0)
+            selected_rm = linucb.select_arm(context)
+
+            responses = response_generator.generate_responses(queries, n_responses=n_responses)
+            if not responses:
+                continue
+
+            preference_pairs = preference_pair_generators[selected_rm].generate_preference_pairs(responses)
+            if not preference_pairs:
+                continue
+
+            loss = trainer.train_step(preference_pairs)
+            linucb.update(selected_rm, context, -loss)
+            total_loss += loss
+            num_updates += 1
+
+    if num_updates == 0:
+        print(f"Iteration {iteration + 1}, no updates performed (skipping)")
+        continue
+
+    avg_loss = total_loss / num_updates
+    print(f"Iteration {iteration + 1}, Loss: {avg_loss}")
+
+    # Reference policy becomes the latest policy for the next iteration (iterative DPO)
+    trainer.sync_reference_model()
 
     # Check convergence
-    if abs(total_loss / len(train_dataset)) < eval_threshold:
+    if abs(avg_loss) < eval_threshold:
         print("Converged.")
         break
 
@@ -111,5 +163,5 @@ for i in range(0, len(test_dataset), batch_size):
 
     # Compute rewards using all reward models
     for rm in reward_models:
-        rm_rewards = [rm.score(query, response) for query, response in responses]
+        rm_rewards = [rm.score(item["prompt"], item["response"]) for item in responses]
         print(f"Rewards from {rm.name}: {rm_rewards}")

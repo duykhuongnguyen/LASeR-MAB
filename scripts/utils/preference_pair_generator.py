@@ -1,23 +1,48 @@
+from collections import defaultdict
+
+
 class PreferencePairGenerator:
     def __init__(self, reward_model):
         self.reward_model = reward_model
 
     def generate_preference_pairs(self, responses, P=10):
         """Generate preference pairs by scoring and ranking the responses."""
-        # Generate scores for each response
-        scores = [(response, self.reward_model.score(query, response)) for query, response in responses]
+        grouped = defaultdict(list)
+        for item in responses:
+            grouped[(item["query"], item["prompt"])].append(item["response"])
 
-        # Sort responses based on scores (highest to lowest)
-        sorted_responses = sorted(scores, key=lambda x: x[1], reverse=True)
-
-        # Create P preference pairs
         pairs = []
-        for i in range(len(sorted_responses)):
-            for j in range(i + 1, len(sorted_responses)):
-                if len(pairs) < P:
-                    pairs.append((sorted_responses[i][0], sorted_responses[j][0]))
-                else:
+        for (query, prompt), candidate_responses in grouped.items():
+            if len(candidate_responses) < 2:
+                continue
+
+            scored = [
+                {
+                    "response": response,
+                    "score": self.reward_model.score(prompt, response),
+                }
+                for response in candidate_responses
+            ]
+            scored.sort(key=lambda item: item["score"], reverse=True)
+
+            pair_count = 0
+            for i in range(len(scored)):
+                for j in range(i + 1, len(scored)):
+                    pairs.append(
+                        {
+                            "query": query,
+                            "prompt": prompt,
+                            "chosen": scored[i]["response"],
+                            "rejected": scored[j]["response"],
+                            "chosen_score": scored[i]["score"],
+                            "rejected_score": scored[j]["score"],
+                        }
+                    )
+                    pair_count += 1
+                    if P is not None and pair_count >= P:
+                        break
+                if P is not None and pair_count >= P:
                     break
-            if len(pairs) >= P:
-                break
+
         return pairs
+

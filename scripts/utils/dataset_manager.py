@@ -28,7 +28,6 @@ class DatasetManager:
                 raise FileNotFoundError(f"Dataset file {dataset_path} not found.")
 
             # Load the dataset from JSON file
-            breakpoint()
             dataset = load_dataset("json", data_files=dataset_path)['train']
 
             # Split the dataset into train, test, and dev sets
